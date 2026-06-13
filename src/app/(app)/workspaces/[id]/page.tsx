@@ -167,28 +167,31 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      {/* Workspace metric cards */}
+      {/* Workspace metric cards — dataset match values take priority when available */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           icon={BarChart3Icon}
           label="Compliance fit"
-          value={metrics.total ? `${metrics.compliance}%` : "—"}
-          sub={`${metrics.pass}/${metrics.total} requirements passed`}
-          color={metrics.compliance >= 70 ? "emerald" : metrics.compliance >= 50 ? "amber" : "red"}
+          value={matchResult ? `${matchResult.complianceEstimate}%` : metrics.total ? `${metrics.compliance}%` : "—"}
+          sub={matchResult ? `Dataset: ${matchResult.datasetFileName}` : `${metrics.pass}/${metrics.total} requirements passed`}
+          color={(matchResult?.complianceEstimate ?? metrics.compliance) >= 70 ? "emerald" : (matchResult?.complianceEstimate ?? metrics.compliance) >= 50 ? "amber" : "red"}
+          badge={matchResult ? "AI" : undefined}
         />
         <MetricCard
           icon={TrendingUpIcon}
           label="Win probability"
-          value={metrics.total ? `${metrics.winScore}%` : "—"}
-          sub={metrics.goNoGo}
-          color={metrics.winScore >= 70 ? "emerald" : metrics.winScore >= 50 ? "amber" : "red"}
+          value={matchResult ? `${matchResult.winProbability}%` : metrics.total ? `${metrics.winScore}%` : "—"}
+          sub={matchResult ? matchResult.predictedOutcome : metrics.goNoGo}
+          color={(matchResult?.winProbability ?? metrics.winScore) >= 70 ? "emerald" : (matchResult?.winProbability ?? metrics.winScore) >= 50 ? "amber" : "red"}
+          badge={matchResult ? "AI" : undefined}
         />
         <MetricCard
           icon={ShieldAlertIcon}
           label="Open gaps"
-          value={String(metrics.openGaps)}
-          sub={`${metrics.mandatoryFail} mandatory missing`}
-          color={metrics.mandatoryFail > 0 ? "red" : metrics.openGaps > 0 ? "amber" : "emerald"}
+          value={matchResult ? String(matchResult.gaps.length) : String(metrics.openGaps)}
+          sub={matchResult ? `${matchResult.strengths.length} strengths identified` : `${metrics.mandatoryFail} mandatory missing`}
+          color={matchResult ? (matchResult.gaps.length > 5 ? "red" : matchResult.gaps.length > 2 ? "amber" : "emerald") : metrics.mandatoryFail > 0 ? "red" : metrics.openGaps > 0 ? "amber" : "emerald"}
+          badge={matchResult ? "AI" : undefined}
         />
         <MetricCard
           icon={ClockIcon}
@@ -203,10 +206,13 @@ export default function WorkspacePage() {
         <MetricCard
           icon={GaugeIcon}
           label="GO / NO-GO"
-          value={metrics.total ? metrics.goNoGo : "Pending"}
-          sub="Based on current evidence"
-          color={metrics.winScore >= 70 ? "emerald" : metrics.winScore >= 50 ? "amber" : "red"}
+          value={matchResult ? matchResult.predictedOutcome : metrics.total ? metrics.goNoGo : "Pending"}
+          sub={matchResult ? `Score: ${matchResult.predictedScore}%` : "Based on current evidence"}
+          color={matchResult
+            ? matchResult.predictedOutcome === "Win" ? "emerald" : matchResult.predictedOutcome === "Loss" ? "red" : "amber"
+            : metrics.winScore >= 70 ? "emerald" : metrics.winScore >= 50 ? "amber" : "red"}
           small
+          badge={matchResult ? "AI" : undefined}
         />
         <MetricCard
           icon={CalendarIcon}
@@ -218,11 +224,12 @@ export default function WorkspacePage() {
         />
         <MetricCard
           icon={FileTextIcon}
-          label="Mandatory requirements"
-          value={String(metrics.mandatory)}
-          sub={`${metrics.mandatoryFail} unmet`}
-          color={metrics.mandatoryFail > 0 ? "red" : "emerald"}
+          label="Matched capabilities"
+          value={matchResult ? String(matchResult.matchedCapabilities.length) : String(metrics.mandatory)}
+          sub={matchResult ? `from ${matchResult.datasetFileName}` : `${metrics.mandatoryFail} unmet`}
+          color={matchResult ? (matchResult.matchedCapabilities.length >= 5 ? "emerald" : matchResult.matchedCapabilities.length >= 2 ? "amber" : "red") : metrics.mandatoryFail > 0 ? "red" : "emerald"}
           small
+          badge={matchResult ? "AI" : undefined}
         />
         <MetricCard
           icon={XCircleIcon}
@@ -265,97 +272,125 @@ export default function WorkspacePage() {
         ))}
       </div>
 
-      {/* Dataset match panel */}
-      <Card className="mt-6 rounded-lg border border-border/70 bg-card/55">
-        <CardHeader>
+      {/* Dataset match strip */}
+      <div className="mt-4 rounded-lg border border-border/70 bg-card/55 px-4 py-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
-            <DatabaseIcon className="size-4 text-sky-400" />
-            <CardTitle>Dataset match</CardTitle>
+            <DatabaseIcon className="size-4 text-sky-400 shrink-0" />
+            {matchResult ? (
+              <span className="text-sm">
+                <span className="text-muted-foreground">Dataset matched: </span>
+                <span className="font-medium">{matchResult.datasetFileName}</span>
+                <span className="text-muted-foreground"> · sector: {matchResult.rfpSector || "—"}</span>
+              </span>
+            ) : activeDataset ? (
+              <span className="text-sm text-muted-foreground">
+                Active dataset: <span className="text-foreground font-medium">{activeDataset.fileName}</span>
+                <span className="ml-2 text-xs">({activeDataset.bidHistory?.length ?? 0} bids · {activeDataset.capabilities?.length ?? 0} caps)</span>
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">No training dataset — <Link href="/company-settings" className="text-sky-400 hover:underline">import one in Company Settings</Link></span>
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
-          {!activeDataset ? (
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <p className="text-sm text-muted-foreground">No training dataset found. Import one in Company Settings → Training datasets.</p>
-              <Button asChild size="sm" variant="secondary">
-                <Link href="/company-settings">Go to Company Settings</Link>
-              </Button>
-            </div>
-          ) : matchResult ? (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between flex-wrap gap-3">
-                <div>
-                  <p className="text-xs text-muted-foreground">Dataset: <span className="text-foreground">{matchResult.datasetFileName}</span></p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Matched against: {matchResult.rfpSector || "Unknown sector"}</p>
+          {activeDataset && (
+            <Button size="sm" variant={matchResult ? "secondary" : "default"} onClick={runMatch} disabled={matching || !workspace.rfpText}>
+              {matching ? <><Loader2Icon className="size-3.5 animate-spin" /> Matching…</> : <><SparklesIcon className="size-3.5" />{matchResult ? "Re-run match" : "Match against dataset"}</>}
+            </Button>
+          )}
+        </div>
+        {matchError && <p className="mt-2 text-xs text-red-400 rounded bg-red-500/10 px-3 py-2">{matchError}</p>}
+      </div>
+
+      {/* Dataset match details — shown inline below metrics when a match exists */}
+      {matchResult && (
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {/* Matched capabilities */}
+          {matchResult.matchedCapabilities.length > 0 && (
+            <Card className="rounded-lg border border-sky-400/20 bg-sky-400/5">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2Icon className="size-4 text-sky-400" />
+                  <CardTitle className="text-sky-300">Matched capabilities ({matchResult.matchedCapabilities.length})</CardTitle>
                 </div>
-                <Button size="sm" variant="secondary" onClick={runMatch} disabled={matching}>
-                  {matching ? <><Loader2Icon className="size-3.5 animate-spin" /> Matching…</> : <><SparklesIcon className="size-3.5" /> Re-run match</>}
-                </Button>
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {[
-                  { label: "Predicted outcome", value: matchResult.predictedOutcome, color: matchResult.predictedOutcome === "Win" ? "text-emerald-400" : matchResult.predictedOutcome === "Loss" ? "text-red-400" : "text-amber-400" },
-                  { label: "Win probability", value: `${matchResult.winProbability}%`, color: matchResult.winProbability >= 60 ? "text-emerald-400" : "text-amber-400" },
-                  { label: "Predicted score", value: `${matchResult.predictedScore}%`, color: matchResult.predictedScore >= 70 ? "text-emerald-400" : "text-amber-400" },
-                  { label: "Compliance est.", value: `${matchResult.complianceEstimate}%`, color: matchResult.complianceEstimate >= 70 ? "text-emerald-400" : "text-amber-400" },
-                ].map((m) => (
-                  <div key={m.label} className="rounded-lg border border-border/60 bg-background/40 p-3">
-                    <p className="text-xs text-muted-foreground">{m.label}</p>
-                    <p className={cn("mt-1 text-xl font-bold", m.color)}>{m.value}</p>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {matchResult.matchedCapabilities.slice(0, 6).map((c) => (
+                  <div key={c.capId} className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.domain}</p>
+                      <p className="text-xs text-muted-foreground truncate">{c.matchReason}</p>
+                    </div>
+                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold", c.matchScore >= 70 ? "bg-emerald-400/15 text-emerald-300" : "bg-amber-400/15 text-amber-300")}>
+                      {c.matchScore}%
+                    </span>
                   </div>
                 ))}
-              </div>
-              {matchResult.groqAnalysis && (
-                <div className="rounded-lg border border-border/60 bg-background/40 p-3">
-                  <p className="text-xs font-semibold text-muted-foreground mb-1">AI analysis</p>
-                  <p className="text-sm text-muted-foreground">{matchResult.groqAnalysis}</p>
-                </div>
-              )}
-              <div className="grid gap-3 sm:grid-cols-2">
-                {matchResult.strengths.length > 0 && (
-                  <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3">
-                    <p className="text-xs font-semibold text-emerald-300 mb-2">Strengths ({matchResult.strengths.length})</p>
-                    <ul className="space-y-1">
-                      {matchResult.strengths.slice(0, 4).map((s, i) => <li key={i} className="text-xs text-muted-foreground">• {s}</li>)}
-                    </ul>
-                  </div>
-                )}
-                {matchResult.gaps.length > 0 && (
-                  <div className="rounded-lg border border-red-400/20 bg-red-400/5 p-3">
-                    <p className="text-xs font-semibold text-red-300 mb-2">Gaps ({matchResult.gaps.length})</p>
-                    <ul className="space-y-1">
-                      {matchResult.gaps.slice(0, 4).map((g, i) => <li key={i} className="text-xs text-muted-foreground">• {g}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </div>
-              {matchResult.matchedCapabilities.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">Matched capabilities ({matchResult.matchedCapabilities.length})</p>
-                  <div className="flex flex-wrap gap-2">
-                    {matchResult.matchedCapabilities.slice(0, 8).map((c) => (
-                      <span key={c.capId} className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2.5 py-1 text-xs text-sky-300">
-                        {c.domain} — {c.matchScore}%
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <p className="text-sm text-muted-foreground">Active dataset: <span className="text-foreground font-medium">{activeDataset.fileName}</span></p>
-                <p className="text-xs text-muted-foreground mt-0.5">{activeDataset.bidHistory?.length ?? 0} bids · {activeDataset.capabilities?.length ?? 0} capabilities · Win rate: {activeDataset.winRate ?? 0}%</p>
-              </div>
-              <Button size="sm" onClick={runMatch} disabled={matching || !workspace.rfpText}>
-                {matching ? <><Loader2Icon className="size-3.5 animate-spin" /> Matching…</> : <><SparklesIcon className="size-3.5" /> Match against dataset</>}
-              </Button>
-            </div>
+              </CardContent>
+            </Card>
           )}
-          {matchError && <p className="mt-2 text-xs text-red-400 rounded bg-red-500/10 px-3 py-2">{matchError}</p>}
-        </CardContent>
-      </Card>
+
+          {/* Strengths & Gaps */}
+          <div className="space-y-4">
+            {matchResult.strengths.length > 0 && (
+              <Card className="rounded-lg border border-emerald-400/20 bg-emerald-400/5">
+                <CardHeader>
+                  <CardTitle className="text-emerald-300 text-sm">Strengths ({matchResult.strengths.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-1.5">
+                    {matchResult.strengths.slice(0, 4).map((s, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                        <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{s}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+            {matchResult.gaps.length > 0 && (
+              <Card className="rounded-lg border border-red-400/20 bg-red-400/5">
+                <CardHeader>
+                  <CardTitle className="text-red-300 text-sm">Gaps to address ({matchResult.gaps.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-1.5">
+                    {matchResult.gaps.slice(0, 4).map((g, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                        <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-red-400" />{g}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* AI analysis & recommendations */}
+          {(matchResult.groqAnalysis || matchResult.recommendations.length > 0) && (
+            <Card className="rounded-lg border border-border/70 bg-card/55 md:col-span-2">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <SparklesIcon className="size-4 text-violet-400" />
+                  <CardTitle>AI strategic analysis</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {matchResult.groqAnalysis && <p className="text-sm text-muted-foreground">{matchResult.groqAnalysis}</p>}
+                {matchResult.recommendations.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Recommendations</p>
+                    <ul className="space-y-1.5">
+                      {matchResult.recommendations.map((r, i) => (
+                        <li key={i} className="text-xs text-muted-foreground">→ {r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* RFP text preview */}
       {workspace.rfpText && (
@@ -397,6 +432,7 @@ function MetricCard({
   sub,
   color = "sky",
   small = false,
+  badge,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -404,11 +440,15 @@ function MetricCard({
   sub?: string;
   color?: MetricColor;
   small?: boolean;
+  badge?: string;
 }) {
   return (
-    <Card className="rounded-lg border border-border/70 bg-card/55">
+    <Card className={cn("rounded-lg border bg-card/55", badge ? "border-sky-400/30" : "border-border/70")}>
       <CardHeader className="pb-2">
-        <Icon className={cn("size-4", colorMap[color])} />
+        <div className="flex items-center justify-between">
+          <Icon className={cn("size-4", colorMap[color])} />
+          {badge && <span className="rounded-full bg-sky-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-300">{badge}</span>}
+        </div>
         <CardTitle className="text-sm">{label}</CardTitle>
       </CardHeader>
       <CardContent>
