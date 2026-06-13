@@ -73,6 +73,8 @@ export type StoredCompany = {
   certFileUrls: string[];  // data URLs of uploaded certificates
   // Capabilities (generated)
   capabilities?: StoredCapability[];
+  // Active training dataset for tender matching
+  activeDatasetId?: string;
 };
 
 export type StoredCapability = {

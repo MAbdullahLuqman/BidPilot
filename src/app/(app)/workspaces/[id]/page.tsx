@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangleIcon,
@@ -9,9 +9,12 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   ClockIcon,
+  DatabaseIcon,
   FileTextIcon,
   GaugeIcon,
+  Loader2Icon,
   ShieldAlertIcon,
+  SparklesIcon,
   TrendingUpIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -21,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useStoredWorkspace, useStoredCompany } from "@/lib/client-storage";
+import { useStoredDatasets, useStoredMatchResult, saveWorkspaceMatchResult, type MatchResult } from "@/lib/dataset-store";
 import { cn } from "@/lib/utils";
 
 export default function WorkspacePage() {
@@ -28,6 +32,12 @@ export default function WorkspacePage() {
   const params = useParams<{ id: string }>();
   const workspace = useStoredWorkspace(user, params.id);
   const company = useStoredCompany(user);
+  const datasets = useStoredDatasets(user);
+  const activeDataset = datasets.find((d) => d.id === company?.activeDatasetId) ?? datasets[0] ?? null;
+  const storedMatch = useStoredMatchResult(user, params.id);
+  const [matching, setMatching] = useState(false);
+  const [matchError, setMatchError] = useState("");
+  const [matchResult, setMatchResult] = useState<MatchResult | null>(storedMatch);
 
   const metrics = useMemo(() => {
     if (!workspace) return null;
@@ -80,6 +90,34 @@ export default function WorkspacePage() {
       openGaps, compliance, winScore, goNoGo, goNoGoColor, timeSavedPct,
     };
   }, [workspace]);
+
+  async function runMatch() {
+    if (!workspace || !activeDataset) return;
+    setMatching(true);
+    setMatchError("");
+    try {
+      const res = await fetch("/api/datasets/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rfpText: workspace.rfpText,
+          rfpTitle: workspace.title,
+          rfpSector: workspace.sector,
+          rfpBudget: "",
+          rfpClientType: "",
+          dataset: activeDataset,
+        }),
+      });
+      const data = await res.json() as { result?: MatchResult; error?: string };
+      if (!res.ok || !data.result) throw new Error(data.error ?? "Match failed");
+      setMatchResult(data.result);
+      saveWorkspaceMatchResult(user, params.id, data.result);
+    } catch (err) {
+      setMatchError(err instanceof Error ? err.message : "Match failed");
+    } finally {
+      setMatching(false);
+    }
+  }
 
   if (!workspace || !metrics) return <MissingWorkspace />;
 
@@ -226,6 +264,98 @@ export default function WorkspacePage() {
           </Card>
         ))}
       </div>
+
+      {/* Dataset match panel */}
+      <Card className="mt-6 rounded-lg border border-border/70 bg-card/55">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <DatabaseIcon className="size-4 text-sky-400" />
+            <CardTitle>Dataset match</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!activeDataset ? (
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <p className="text-sm text-muted-foreground">No training dataset found. Import one in Company Settings → Training datasets.</p>
+              <Button asChild size="sm" variant="secondary">
+                <Link href="/company-settings">Go to Company Settings</Link>
+              </Button>
+            </div>
+          ) : matchResult ? (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between flex-wrap gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Dataset: <span className="text-foreground">{matchResult.datasetFileName}</span></p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Matched against: {matchResult.rfpSector || "Unknown sector"}</p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={runMatch} disabled={matching}>
+                  {matching ? <><Loader2Icon className="size-3.5 animate-spin" /> Matching…</> : <><SparklesIcon className="size-3.5" /> Re-run match</>}
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: "Predicted outcome", value: matchResult.predictedOutcome, color: matchResult.predictedOutcome === "Win" ? "text-emerald-400" : matchResult.predictedOutcome === "Loss" ? "text-red-400" : "text-amber-400" },
+                  { label: "Win probability", value: `${matchResult.winProbability}%`, color: matchResult.winProbability >= 60 ? "text-emerald-400" : "text-amber-400" },
+                  { label: "Predicted score", value: `${matchResult.predictedScore}%`, color: matchResult.predictedScore >= 70 ? "text-emerald-400" : "text-amber-400" },
+                  { label: "Compliance est.", value: `${matchResult.complianceEstimate}%`, color: matchResult.complianceEstimate >= 70 ? "text-emerald-400" : "text-amber-400" },
+                ].map((m) => (
+                  <div key={m.label} className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <p className="text-xs text-muted-foreground">{m.label}</p>
+                    <p className={cn("mt-1 text-xl font-bold", m.color)}>{m.value}</p>
+                  </div>
+                ))}
+              </div>
+              {matchResult.groqAnalysis && (
+                <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">AI analysis</p>
+                  <p className="text-sm text-muted-foreground">{matchResult.groqAnalysis}</p>
+                </div>
+              )}
+              <div className="grid gap-3 sm:grid-cols-2">
+                {matchResult.strengths.length > 0 && (
+                  <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3">
+                    <p className="text-xs font-semibold text-emerald-300 mb-2">Strengths ({matchResult.strengths.length})</p>
+                    <ul className="space-y-1">
+                      {matchResult.strengths.slice(0, 4).map((s, i) => <li key={i} className="text-xs text-muted-foreground">• {s}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {matchResult.gaps.length > 0 && (
+                  <div className="rounded-lg border border-red-400/20 bg-red-400/5 p-3">
+                    <p className="text-xs font-semibold text-red-300 mb-2">Gaps ({matchResult.gaps.length})</p>
+                    <ul className="space-y-1">
+                      {matchResult.gaps.slice(0, 4).map((g, i) => <li key={i} className="text-xs text-muted-foreground">• {g}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              {matchResult.matchedCapabilities.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">Matched capabilities ({matchResult.matchedCapabilities.length})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {matchResult.matchedCapabilities.slice(0, 8).map((c) => (
+                      <span key={c.capId} className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2.5 py-1 text-xs text-sky-300">
+                        {c.domain} — {c.matchScore}%
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Active dataset: <span className="text-foreground font-medium">{activeDataset.fileName}</span></p>
+                <p className="text-xs text-muted-foreground mt-0.5">{activeDataset.bidHistory?.length ?? 0} bids · {activeDataset.capabilities?.length ?? 0} capabilities · Win rate: {activeDataset.winRate ?? 0}%</p>
+              </div>
+              <Button size="sm" onClick={runMatch} disabled={matching || !workspace.rfpText}>
+                {matching ? <><Loader2Icon className="size-3.5 animate-spin" /> Matching…</> : <><SparklesIcon className="size-3.5" /> Match against dataset</>}
+              </Button>
+            </div>
+          )}
+          {matchError && <p className="mt-2 text-xs text-red-400 rounded bg-red-500/10 px-3 py-2">{matchError}</p>}
+        </CardContent>
+      </Card>
 
       {/* RFP text preview */}
       {workspace.rfpText && (

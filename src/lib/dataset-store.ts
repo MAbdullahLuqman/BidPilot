@@ -104,15 +104,6 @@ function notify() {
   }
 }
 
-function subscribe(cb: () => void) {
-  window.addEventListener(STORAGE_EVENT, cb);
-  window.addEventListener("storage", cb);
-  return () => {
-    window.removeEventListener(STORAGE_EVENT, cb);
-    window.removeEventListener("storage", cb);
-  };
-}
-
 // ── Dataset CRUD ──────────────────────────────────────────────────────────────
 
 export function getStoredDatasets(user: User | null | undefined): TrainingDataset[] {

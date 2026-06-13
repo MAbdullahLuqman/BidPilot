@@ -6,9 +6,11 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckCircle2Icon,
+  DatabaseIcon,
   Loader2Icon,
   PaperclipIcon,
   PlusIcon,
+  StarIcon,
   TrashIcon,
   UploadIcon,
 } from "lucide-react";
@@ -26,9 +28,14 @@ import {
   type StoredCompany,
   type StoredPastProject,
 } from "@/lib/client-storage";
+import {
+  useStoredDatasets,
+  deleteDataset,
+  type TrainingDataset,
+} from "@/lib/dataset-store";
 import { cn } from "@/lib/utils";
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
 const emptyProject: StoredPastProject = {
   title: "", clientName: "", clientType: "", sector: "", projectValue: "",
@@ -53,7 +60,7 @@ const emptyCompany: StoredCompany = {
   taxFileUrls: [], regFileUrls: [], certFileUrls: [],
 };
 
-const STEP_LABELS = ["Basic info & legal", "Services & experience", "Past projects", "Certifications & team"];
+const STEP_LABELS = ["Basic info & legal", "Services & experience", "Past projects", "Certifications & team", "Training datasets"];
 
 function Field({ label, value, onChange, placeholder, type = "text" }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
@@ -141,10 +148,13 @@ export default function CompanySettingsPage() {
   const router = useRouter();
   const { user } = useAuth();
   const saved = useStoredCompany(user);
+  const datasets = useStoredDatasets(user);
   const [form, setForm] = useState<StoredCompany>(saved ? { ...emptyCompany, ...saved } : emptyCompany);
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
 
   const set = (field: keyof StoredCompany, value: unknown) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -179,6 +189,31 @@ export default function CompanySettingsPage() {
 
   function removeCustomCert(index: number) {
     setForm((prev) => ({ ...prev, customCertificates: (prev.customCertificates ?? []).filter((_, i) => i !== index) }));
+  }
+
+  async function importDataset(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setImportError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/datasets/import", { method: "POST", body: fd });
+      const data = await res.json() as { dataset?: TrainingDataset; error?: string };
+      if (!res.ok || !data.dataset) throw new Error(data.error ?? "Import failed");
+      const { saveDataset } = await import("@/lib/dataset-store");
+      saveDataset(user, data.dataset);
+      // Auto-select as active if none set
+      if (!form.activeDatasetId) {
+        setForm((prev) => ({ ...prev, activeDatasetId: data.dataset!.id }));
+      }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function saveAndContinue() {
@@ -527,6 +562,113 @@ export default function CompanySettingsPage() {
                 <Label>Software / tools / equipment</Label>
                 <textarea value={form.softwareTools} onChange={(e) => set("softwareTools", e.target.value)} rows={2} placeholder="AutoCAD, Civil3D, SAP2000, Primavera P6, GIS, survey equipment…" className="w-full rounded-lg border border-input bg-input/30 px-3 py-2 text-sm outline-none focus-visible:border-ring" />
               </div>
+            </div>
+          )}
+
+          {/* ── STEP 5 ── */}
+          {step === 5 && (
+            <div className="space-y-5">
+              <div className="rounded-lg border border-border/60 bg-background/40 p-4 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Import training dataset</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Upload an Excel file with Bid History and Capability Library sheets. Used to match incoming tenders against your past performance.</p>
+                  </div>
+                  <label className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded-md border border-dashed px-4 py-2 text-sm font-medium transition-colors",
+                    importing
+                      ? "border-border/40 text-muted-foreground cursor-not-allowed"
+                      : "border-emerald-400/50 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-400/5"
+                  )}>
+                    {importing ? <Loader2Icon className="size-4 animate-spin" /> : <UploadIcon className="size-4" />}
+                    {importing ? "Importing…" : "Upload Excel (.xlsx)"}
+                    <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" disabled={importing} onChange={importDataset} />
+                  </label>
+                </div>
+                {importError && (
+                  <p className="text-xs text-red-400 rounded-md bg-red-500/10 px-3 py-2">{importError}</p>
+                )}
+              </div>
+
+              {datasets.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/50 py-10 text-center">
+                  <DatabaseIcon className="mx-auto mb-2 size-8 text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground">No datasets imported yet.</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">Upload an Excel file above to get started.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    {datasets.length} dataset{datasets.length !== 1 ? "s" : ""} — select one as active for tender matching
+                  </p>
+                  {datasets.map((ds) => {
+                    const isActive = form.activeDatasetId === ds.id;
+                    return (
+                      <div key={ds.id} className={cn(
+                        "rounded-lg border p-4 transition-colors",
+                        isActive ? "border-emerald-400/60 bg-emerald-400/5" : "border-border/60 bg-background/40"
+                      )}>
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold truncate">{ds.fileName}</p>
+                              {isActive && (
+                                <span className="flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-xs text-emerald-300 shrink-0">
+                                  <StarIcon className="size-3" /> Active
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Imported {new Date(ds.importedAt).toLocaleDateString()} ·{" "}
+                              {ds.bidHistory?.length ?? 0} bids · {ds.capabilities?.length ?? 0} capabilities · Win rate: {ds.winRate ?? 0}%
+                            </p>
+                            {(ds.domainIndex?.length ?? 0) > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {ds.domainIndex!.slice(0, 6).map((d) => (
+                                  <span key={d} className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-300">{d}</span>
+                                ))}
+                                {(ds.domainIndex!.length > 6) && (
+                                  <span className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">+{ds.domainIndex!.length - 6} more</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isActive && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setForm((prev) => ({ ...prev, activeDatasetId: ds.id }))}
+                              >
+                                Set active
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                deleteDataset(user, ds.id);
+                                if (form.activeDatasetId === ds.id) {
+                                  setForm((prev) => ({ ...prev, activeDatasetId: undefined }));
+                                }
+                              }}
+                            >
+                              <TrashIcon className="size-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                        {isActive && (
+                          <p className="mt-3 text-xs text-emerald-300/70 border-t border-emerald-400/20 pt-2">
+                            This dataset will be used automatically when running AI tender matching in any workspace.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
