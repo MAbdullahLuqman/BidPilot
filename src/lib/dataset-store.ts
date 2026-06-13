@@ -76,12 +76,23 @@ function matchKey(user: User | null | undefined, workspaceId: string) {
 
 // ── Read / write helpers ──────────────────────────────────────────────────────
 
+// Cache parsed values by key so getSnapshot returns the same reference when
+// the underlying localStorage string hasn't changed — required by useSyncExternalStore.
+const jsonCache = new Map<string, { raw: string; value: unknown }>();
+
 function readJson<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
+    if (!raw) {
+      jsonCache.delete(key);
+      return null;
+    }
+    const cached = jsonCache.get(key);
+    if (cached?.raw === raw) return cached.value as T;
+    const parsed = JSON.parse(raw) as T;
+    jsonCache.set(key, { raw, value: parsed });
+    return parsed;
   } catch {
     return null;
   }
