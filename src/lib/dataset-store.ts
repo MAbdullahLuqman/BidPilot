@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useState, useEffect } from "react";
 import type { User } from "firebase/auth";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -163,17 +163,43 @@ export function saveWorkspaceMatchResult(user: User | null | undefined, workspac
 // ── React hooks ───────────────────────────────────────────────────────────────
 
 export function useStoredDatasets(user: User | null | undefined): TrainingDataset[] {
-  return useSyncExternalStore(
-    subscribe,
-    () => getStoredDatasets(user),
-    () => [],
+  const uid = user?.uid ?? null;
+  const [datasets, setDatasets] = useState<TrainingDataset[]>(() =>
+    typeof window === "undefined" ? [] : getStoredDatasets(user),
   );
+
+  useEffect(() => {
+    const update = () => setDatasets(getStoredDatasets(user));
+    update();
+    window.addEventListener(STORAGE_EVENT, update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener(STORAGE_EVENT, update);
+      window.removeEventListener("storage", update);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  return datasets;
 }
 
 export function useStoredMatchResult(user: User | null | undefined, workspaceId: string): MatchResult | null {
-  return useSyncExternalStore(
-    subscribe,
-    () => getStoredMatchResult(user, workspaceId),
-    () => null,
+  const uid = user?.uid ?? null;
+  const [result, setResult] = useState<MatchResult | null>(() =>
+    typeof window === "undefined" ? null : getStoredMatchResult(user, workspaceId),
   );
+
+  useEffect(() => {
+    const update = () => setResult(getStoredMatchResult(user, workspaceId));
+    update();
+    window.addEventListener(STORAGE_EVENT, update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener(STORAGE_EVENT, update);
+      window.removeEventListener("storage", update);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, workspaceId]);
+
+  return result;
 }
